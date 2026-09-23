@@ -135,6 +135,71 @@ Instead of opening a new TCP/SSE connection to Upfluence for every incoming HTTP
 * **Automatic Reconnection:** If the upstream SSE connection drops, the worker automatically attempts reconnection with an exponential/linear backoff strategy without terminating the HTTP server.
 * **Horizontal Scalability:** In an orchestrator like Kubernetes, each replica maintains a single upstream connection and serves its local concurrent requests efficiently.
 
+### Architecture & Concurrency Pattern
+
+To ensure optimal resource utilization and strict upstream isolation, the application decouples external network ingestion from internal client processing using a producer-consumer fan-out topology:
+
+```mermaid
+flowchart TD
+    subgraph Upstream ["Upstream Stream API"]
+        SSE[https://stream.upfluence.co/stream]
+    end
+
+    subgraph Core ["Application Core"]
+        Worker["StreamWorker\n(Singleton background routine)"]
+        Bus["EventBus\n(Thread-safe in-memory fan-out)"]
+    end
+
+    subgraph Subscribers ["Active Analysis Handlers"]
+        Ch1["chan Item (Buffer: 100)"]
+        Ch2["chan Item (Buffer: 100)"]
+        Ch3["chan Item (Buffer: 100)"]
+
+        Req1["Client 1: GET /analysis\n(dim: likes, duration: 10s)"]
+        Req2["Client 2: GET /analysis\n(dim: retweets, duration: 30s)"]
+        Req3["Client 3: GET /analysis\n(dim: comments, duration: infinite)"]
+    end
+
+    SSE -->|"Single persistent HTTP/SSE connection"| Worker
+    Worker -->|"Publish(Item)"| Bus
+
+    Bus -->|"Non-blocking dispatch"| Ch1
+    Bus -->|"Non-blocking dispatch"| Ch2
+    Bus -->|"Non-blocking dispatch"| Ch3
+
+    Ch1 --> Req1
+    Ch2 --> Req2
+    Ch3 --> Req3
+
+    classDef stream fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef internal fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    classDef client fill:#e8f5e9,stroke:#388e3c,stroke-width:2px;
+
+    class SSE stream;
+    class Worker,Bus internal;
+    class Ch1,Ch2,Ch3,Req1,Req2,Req3 client;
+```
+
+#### Detailed Workflow
+
+1. **Ingestion Layer (`StreamWorker`):**
+   * Instantiated once at application startup.
+   * Maintains a single persistent HTTP GET connection reading the SSE stream line by line.
+   * Handles JSON unmarshaling into raw entities and wraps valid entries into polymorphic `Item` instances.
+   * Manages network interruptions via an automatic reconnect loop with backoff, shielding the rest of the application from upstream instability.
+
+2. **Distribution Layer (`EventBus`):**
+   * Acts as a central in-memory message dispatcher.
+   * Manages an active registry of client channels (`map[chan Item]struct{}`) protected by a `sync.RWMutex`.
+   * When `Publish(item)` is invoked by the worker, the bus broadcasts the event pointer to every registered subscriber.
+   * Uses non-blocking channel dispatch (`select { case ch <- item: default: }`) to guarantee that slow or blocked consumers do not stall the ingestion loop or affect other concurrent analyses.
+
+3. **Processing Layer (`AggregationService.Analyze`):**
+   * Dynamically spawned per incoming HTTP request (`GET /analysis`).
+   * Calls `bus.Subscribe()` to obtain an isolated buffered channel and an unsubscribe closure.
+   * Accumulates metric values and tracks timestamp bounds for matching dimensions during the requested duration window.
+   * Invokes `unsubscribe()` upon completion or client disconnect, cleanly releasing resources from the registry.
+
 ### Polymorphic Domain Model (`Item` Interface)
 
 The upstream SSE stream emits heterogeneous JSON payloads where field naming varies by platform (e.g., `favorites` on Twitter vs. `likes` on YouTube, or platform-specific engagement counters).
