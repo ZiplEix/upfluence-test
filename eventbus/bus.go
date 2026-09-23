@@ -1,6 +1,10 @@
 package eventbus
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/ZiplEix/upfluence-test/telemetry"
+)
 
 type EventBus[T any] struct {
 	mu          sync.RWMutex
@@ -27,12 +31,15 @@ func (b *EventBus[T]) Subscribe() (EventChannel <-chan T, unsubscribe func()) {
 	b.subscribers[ch] = struct{}{}
 	b.mu.Unlock()
 
+	telemetry.ActiveSubscribers.Add(1)
+
 	unsubscribe = func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if _, exists := b.subscribers[ch]; exists {
 			delete(b.subscribers, ch)
 			close(ch)
+			telemetry.ActiveSubscribers.Add(-1)
 		}
 	}
 
@@ -49,6 +56,7 @@ func (b *EventBus[T]) Publish(event T) {
 		case ch <- event:
 		default:
 			// drop event on full channel
+			telemetry.DroppedEvents.Add(1)
 		}
 	}
 }

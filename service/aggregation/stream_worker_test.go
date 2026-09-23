@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ZiplEix/upfluence-test/eventbus"
+	"github.com/ZiplEix/upfluence-test/telemetry"
 )
 
 func TestNewStreamWorker(t *testing.T) {
@@ -235,3 +236,59 @@ func TestStreamWorker_Start_ReconnectOnError(t *testing.T) {
 	worker.Start(ctx)
 	<-ctx.Done()
 }
+
+func TestStreamWorker_Telemetry(t *testing.T) {
+	holdCh := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		_, _ = fmt.Fprint(w, "data: {\"tweet\":{\"id\":999,\"favorites\":10,\"retweets\":2,\"timestamp\":1000}}\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-holdCh
+	}))
+	defer ts.Close()
+
+	bus := eventbus.New[Item](10)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	worker := NewStreamWorker(ts.URL, bus)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = worker.consumeStream(ctx)
+	}()
+
+	// Wait for item to arrive
+	select {
+	case <-ch:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for item")
+	}
+
+	// Stream should be marked as connected
+	if telemetry.StreamStatus.Value() != 1 {
+		t.Errorf("expected StreamStatus 1 while connected, got %d", telemetry.StreamStatus.Value())
+	}
+	if v := telemetry.EventsIngested.Get("tweet"); v == nil {
+		t.Errorf("expected 'tweet' in EventsIngested")
+	}
+
+	// Close stream and cancel context
+	close(holdCh)
+	cancel()
+
+	// Wait briefly for consumeStream defer to run
+	time.Sleep(50 * time.Millisecond)
+
+	if telemetry.StreamStatus.Value() != 0 {
+		t.Errorf("expected StreamStatus 0 after disconnect, got %d", telemetry.StreamStatus.Value())
+	}
+}
+

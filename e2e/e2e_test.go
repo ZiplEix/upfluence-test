@@ -405,3 +405,85 @@ func TestE2E_MainBinaryExecution(t *testing.T) {
 		t.Fatal("process did not shutdown within 6 seconds after SIGTERM")
 	}
 }
+
+func TestE2E_TelemetryDebugVars(t *testing.T) {
+	serverAddr, cleanup := setupE2EEnvironment(t)
+	defer cleanup()
+
+	// 1. Perform an aggregation query to trigger metrics
+	analysisURL := fmt.Sprintf("http://%s/analysis?dimension=likes&duration=80ms", serverAddr)
+	resp, err := http.Get(analysisURL)
+	if err != nil {
+		t.Fatalf("failed to query analysis: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for analysis, got %d", resp.StatusCode)
+	}
+
+	// 2. Query /debug/vars
+	debugURL := fmt.Sprintf("http://%s/debug/vars", serverAddr)
+	debugResp, err := http.Get(debugURL)
+	if err != nil {
+		t.Fatalf("failed to query /debug/vars: %v", err)
+	}
+	defer func() { _ = debugResp.Body.Close() }()
+
+	if debugResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /debug/vars, got %d", debugResp.StatusCode)
+	}
+
+	var debugData map[string]any
+	if err := json.NewDecoder(debugResp.Body).Decode(&debugData); err != nil {
+		t.Fatalf("failed to decode /debug/vars JSON: %v", err)
+	}
+
+	// Verify required keys are present
+	expectedKeys := []string{
+		"eventbus_active_subscribers",
+		"eventbus_dropped_events_total",
+		"stream_worker_connected",
+		"stream_worker_reconnections_total",
+		"stream_worker_errors_total",
+		"stream_events_ingested_total",
+		"http_requests_total",
+		"http_requests_by_status",
+		"analysis_requests_by_dimension",
+	}
+
+	for _, key := range expectedKeys {
+		if _, exists := debugData[key]; !exists {
+			t.Errorf("expected key '%s' in /debug/vars output", key)
+		}
+	}
+
+	// Verify StreamStatus is 1 (connected)
+	if status, ok := debugData["stream_worker_connected"].(float64); !ok || status != 1 {
+		t.Errorf("expected stream_worker_connected = 1, got %v", debugData["stream_worker_connected"])
+	}
+
+	// Verify stream_events_ingested_total has entries
+	if eventsMap, ok := debugData["stream_events_ingested_total"].(map[string]any); !ok || len(eventsMap) == 0 {
+		t.Errorf("expected stream_events_ingested_total to have entries, got %v", debugData["stream_events_ingested_total"])
+	}
+
+	// Verify http_requests_total >= 1
+	if reqs, ok := debugData["http_requests_total"].(float64); !ok || reqs <= 0 {
+		t.Errorf("expected http_requests_total > 0, got %v", debugData["http_requests_total"])
+	}
+
+	// Verify http_requests_by_status has "200"
+	if statusMap, ok := debugData["http_requests_by_status"].(map[string]any); !ok {
+		t.Errorf("expected http_requests_by_status map, got %v", debugData["http_requests_by_status"])
+	} else if count, ok := statusMap["200"].(float64); !ok || count <= 0 {
+		t.Errorf("expected status 200 count > 0, got %v", statusMap["200"])
+	}
+
+	// Verify analysis_requests_by_dimension has "likes"
+	if dimMap, ok := debugData["analysis_requests_by_dimension"].(map[string]any); !ok {
+		t.Errorf("expected analysis_requests_by_dimension map, got %v", debugData["analysis_requests_by_dimension"])
+	} else if count, ok := dimMap["likes"].(float64); !ok || count <= 0 {
+		t.Errorf("expected likes dimension count > 0, got %v", dimMap["likes"])
+	}
+}
+

@@ -100,6 +100,27 @@ curl "http://localhost:8080/analysis?dimension=likes"
 }
 ```
 
+### Endpoint: `GET /debug/vars` (Telemetry & Observability) (currently not exposed to fit test subject)
+
+Exposes real-time application and runtime metrics using Go's standard `expvar` package:
+
+* **EventBus:** `eventbus_active_subscribers` (gauge), `eventbus_dropped_events_total` (counter)
+* **Stream Worker:** `stream_worker_connected` (gauge: 1 connected, 0 disconnected), `stream_worker_reconnections_total` (counter), `stream_worker_errors_total` (counter), `stream_events_ingested_total` (map: counts by platform e.g. "tweet", "youtube_video", "ignored")
+* **HTTP & Handlers:** `http_requests_total` (counter), `http_requests_by_status` (map: counts by status code e.g. "200", "400", "500"), `analysis_requests_by_dimension` (map: counts by dimension e.g. "likes", "retweets")
+
+```bash
+curl "http://localhost:8080/debug/vars"
+```
+
+### Endpoint: `GET /healthz` (Liveness Probe)
+
+Returns a lightweight JSON health payload:
+
+```bash
+curl "http://localhost:8080/healthz"
+# {"status":"ok"}
+```
+
 ---
 
 ## CI/CD Pipeline & Container Registry

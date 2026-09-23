@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ZiplEix/upfluence-test/logger"
+	"github.com/ZiplEix/upfluence-test/telemetry"
 )
 
 var (
@@ -60,6 +61,8 @@ func (a *API) handlerAggregation() http.HandlerFunc {
 			logger.Add(ctx, slog.String("error", fmt.Sprintf("invalid or missing dimension parameter, got '%s'", dimensionParam)))
 			return
 		}
+
+		telemetry.AnalysisByDimension.Add(dimensionParam, 1)
 
 		slog.Default().Log(ctx, slog.LevelInfo, "starting aggregation",
 			slog.String("request_id", w.Header().Get("X-Request-ID")),

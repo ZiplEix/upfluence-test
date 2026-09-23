@@ -75,7 +75,7 @@ func New(opts ...Option) *API {
 
 	api.routes()
 
-	api.server.Handler = loggingMiddleware(api.mux)
+	api.server.Handler = telemetryMiddleware(loggingMiddleware(api.mux))
 
 	return api
 }

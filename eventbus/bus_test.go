@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ZiplEix/upfluence-test/telemetry"
 )
 
 func TestNew(t *testing.T) {
@@ -212,4 +214,37 @@ func TestEventBus_Concurrency(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	close(stop)
 	wg.Wait()
+}
+
+func TestEventBusTelemetry(t *testing.T) {
+	bus := New[string](1)
+
+	subBefore := telemetry.ActiveSubscribers.Value()
+	dropBefore := telemetry.DroppedEvents.Value()
+
+	ch, unsub := bus.Subscribe()
+	if telemetry.ActiveSubscribers.Value() != subBefore+1 {
+		t.Errorf("expected ActiveSubscribers %d, got %d", subBefore+1, telemetry.ActiveSubscribers.Value())
+	}
+
+	bus.Publish("first")
+
+	// Channel buffer is full (size 1), second publish should drop
+	bus.Publish("second")
+	if telemetry.DroppedEvents.Value() != dropBefore+1 {
+		t.Errorf("expected DroppedEvents %d, got %d", dropBefore+1, telemetry.DroppedEvents.Value())
+	}
+
+	<-ch // drain to unblock
+	unsub()
+
+	if telemetry.ActiveSubscribers.Value() != subBefore {
+		t.Errorf("expected ActiveSubscribers %d after unsub, got %d", subBefore, telemetry.ActiveSubscribers.Value())
+	}
+
+	// Idempotent unsub should not decrement again
+	unsub()
+	if telemetry.ActiveSubscribers.Value() != subBefore {
+		t.Errorf("expected ActiveSubscribers to remain %d after second unsub, got %d", subBefore, telemetry.ActiveSubscribers.Value())
+	}
 }
