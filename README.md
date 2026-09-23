@@ -106,12 +106,12 @@ curl "http://localhost:8080/analysis?dimension=likes"
 
 An automated CI/CD pipeline is configured with **GitHub Actions** ([.github/workflows/ci.yml](./.github/workflows/ci.yml)):
 
-1. **Continuous Testing & Quality:** On every pull request and push to `main`/`master`, the pipeline executes the entire test suite with Go's race detector enabled (`go test -v -race ./...`) and computes statement coverage.
+1. **Continuous Testing & Quality:** On every pull request and push to `master`, the pipeline executes the entire test suite with Go's race detector enabled (`go test -v -race ./...`) and computes statement coverage.
 2. **Automated Docker Image Build:** If all tests succeed, a multi-stage, non-root, security-hardened Alpine container image is compiled.
 3. **Publication to GHCR:** The built image is automatically pushed to the **GitHub Container Registry (GHCR)**:
    * **Registry URL:** `ghcr.io/zipleix/upfluence-test`
    * **Tagging Scheme:**
-     * `:latest` on every push to `main`/`master`
+     * `:latest` on every push to `master`
      * `:v*.*.*` for Git release tags
      * `:<sha>` for specific commit traceability
 
