@@ -41,7 +41,6 @@ func AttrsFromContext(ctx context.Context) []slog.Attr {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	// Retourne une copie défensive
 	copied := make([]slog.Attr, len(store.attrs))
 	copy(copied, store.attrs)
 	return copied
